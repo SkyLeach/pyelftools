@@ -51,6 +51,11 @@ class ELFFile(object):
             little_endian:
                 boolean - specifies the target machine's endianness
 
+            elftype:
+                string or int, either known value of E_TYPE enum defining ELF
+                type (e.g. executable, dynamic library or core dump) or integral
+                unparsed value
+
             header:
                 the complete ELF file header
 
@@ -63,8 +68,11 @@ class ELFFile(object):
         self.structs = ELFStructs(
             little_endian=self.little_endian,
             elfclass=self.elfclass)
-        self.header = self._parse_elf_header()
 
+        self.structs.create_basic_structs()
+        self.header = self._parse_elf_header()
+        self.elftype = self['e_type']
+        self.structs.create_advanced_structs(self.elftype)
         self.stream.seek(0)
         self.e_ident_raw = self.stream.read(16)
 
@@ -137,8 +145,9 @@ class ELFFile(object):
             We assume that if it has the .debug_info or .zdebug_info section, it
             has all the other required sections as well.
         """
-        return bool(self.get_section_by_name('.debug_info')) or \
-            bool(self.get_section_by_name('.zdebug_info'))
+        return (self.get_section_by_name('.debug_info') or
+            self.get_section_by_name('.zdebug_info') or
+            self.get_section_by_name('.eh_frame'))
 
     def get_dwarf_info(self, relocate_dwarf_sections=True):
         """ Return a DWARFInfo object representing the debugging information in
@@ -150,19 +159,22 @@ class ELFFile(object):
         # Expect that has_dwarf_info was called, so at least .debug_info is
         # present.
         # Sections that aren't found will be passed as None to DWARFInfo.
-        #
 
-        section_names = ('.debug_info', '.debug_aranges', '.debug_abbrev', '.debug_str',
-                         '.debug_line', '.debug_frame',
+        section_names = ('.debug_info', '.debug_aranges', '.debug_abbrev',
+                         '.debug_str', '.debug_line', '.debug_frame',
                          '.debug_loc', '.debug_ranges')
 
         compressed = bool(self.get_section_by_name('.zdebug_info'))
         if compressed:
             section_names = tuple(map(lambda x: '.z' + x[1:], section_names))
 
-        debug_info_sec_name, debug_aranges_sec_name, debug_abbrev_sec_name, debug_str_sec_name, \
-            debug_line_sec_name, debug_frame_sec_name, debug_loc_sec_name, \
-            debug_ranges_sec_name = section_names
+        # As it is loaded in the process image, .eh_frame cannot be compressed
+        section_names += ('.eh_frame', )
+
+        (debug_info_sec_name, debug_aranges_sec_name, debug_abbrev_sec_name,
+         debug_str_sec_name, debug_line_sec_name, debug_frame_sec_name,
+         debug_loc_sec_name, debug_ranges_sec_name,
+         eh_frame_sec_name) = section_names
 
         debug_sections = {}
         for secname in section_names:
@@ -173,7 +185,7 @@ class ELFFile(object):
                 dwarf_section = self._read_dwarf_section(
                     section,
                     relocate_dwarf_sections)
-                if compressed:
+                if compressed and secname.startswith('.z'):
                     dwarf_section = self._decompress_dwarf_section(dwarf_section)
                 debug_sections[secname] = dwarf_section
 
@@ -186,8 +198,7 @@ class ELFFile(object):
                 debug_aranges_sec=debug_sections[debug_aranges_sec_name],
                 debug_abbrev_sec=debug_sections[debug_abbrev_sec_name],
                 debug_frame_sec=debug_sections[debug_frame_sec_name],
-                # TODO(eliben): reading of eh_frame is not hooked up yet
-                eh_frame_sec=None,
+                eh_frame_sec=debug_sections[eh_frame_sec_name],
                 debug_str_sec=debug_sections[debug_str_sec_name],
                 debug_loc_sec=debug_sections[debug_loc_sec_name],
                 debug_ranges_sec=debug_sections[debug_ranges_sec_name],
@@ -289,9 +300,9 @@ class ELFFile(object):
         sectype = section_header['sh_type']
 
         if sectype == 'SHT_STRTAB':
-            return StringTableSection(section_header, name, self.stream)
+            return StringTableSection(section_header, name, self)
         elif sectype == 'SHT_NULL':
-            return NullSection(section_header, name, self.stream)
+            return NullSection(section_header, name, self)
         elif sectype in ('SHT_SYMTAB', 'SHT_DYNSYM', 'SHT_SUNW_LDYNSYM'):
             return self._make_symbol_table_section(section_header, name)
         elif sectype == 'SHT_SUNW_syminfo':
@@ -303,16 +314,15 @@ class ELFFile(object):
         elif sectype == 'SHT_GNU_versym':
             return self._make_gnu_versym_section(section_header, name)
         elif sectype in ('SHT_REL', 'SHT_RELA'):
-            return RelocationSection(
-                section_header, name, self.stream, self)
+            return RelocationSection(section_header, name, self)
         elif sectype == 'SHT_DYNAMIC':
-            return DynamicSection(section_header, name, self.stream, self)
+            return DynamicSection(section_header, name, self)
         elif sectype == 'SHT_NOTE':
-            return NoteSection(section_header, name, self.stream, self)
+            return NoteSection(section_header, name, self)
         elif sectype == 'SHT_PROGBITS' and name == '.stab':
-            return StabSection(section_header, name, self.stream, self)
+            return StabSection(section_header, name, self)
         else:
-            return Section(section_header, name, self.stream)
+            return Section(section_header, name, self)
 
     def _make_symbol_table_section(self, section_header, name):
         """ Create a SymbolTableSection
@@ -320,7 +330,7 @@ class ELFFile(object):
         linked_strtab_index = section_header['sh_link']
         strtab_section = self.get_section(linked_strtab_index)
         return SymbolTableSection(
-            section_header, name, self.stream,
+            section_header, name,
             elffile=self,
             stringtable=strtab_section)
 
@@ -330,7 +340,7 @@ class ELFFile(object):
         linked_strtab_index = section_header['sh_link']
         strtab_section = self.get_section(linked_strtab_index)
         return SUNWSyminfoTableSection(
-            section_header, name, self.stream,
+            section_header, name,
             elffile=self,
             symboltable=strtab_section)
 
@@ -340,7 +350,7 @@ class ELFFile(object):
         linked_strtab_index = section_header['sh_link']
         strtab_section = self.get_section(linked_strtab_index)
         return GNUVerNeedSection(
-            section_header, name, self.stream,
+            section_header, name,
             elffile=self,
             stringtable=strtab_section)
 
@@ -350,7 +360,7 @@ class ELFFile(object):
         linked_strtab_index = section_header['sh_link']
         strtab_section = self.get_section(linked_strtab_index)
         return GNUVerDefSection(
-            section_header, name, self.stream,
+            section_header, name,
             elffile=self,
             stringtable=strtab_section)
 
@@ -360,7 +370,7 @@ class ELFFile(object):
         linked_strtab_index = section_header['sh_link']
         strtab_section = self.get_section(linked_strtab_index)
         return GNUVerSymSection(
-            section_header, name, self.stream,
+            section_header, name,
             elffile=self,
             symboltable=strtab_section)
 
@@ -379,7 +389,7 @@ class ELFFile(object):
         return StringTableSection(
                 header=self._get_section_header(stringtable_section_num),
                 name='',
-                stream=self.stream)
+                elffile=self)
 
     def _parse_elf_header(self):
         """ Parses the ELF file header and assigns the result to attributes
@@ -391,10 +401,9 @@ class ELFFile(object):
         """ Read the contents of a DWARF section from the stream and return a
             DebugSectionDescriptor. Apply relocations if asked to.
         """
-        self.stream.seek(section['sh_offset'])
         # The section data is read into a new stream, for processing
         section_stream = BytesIO()
-        section_stream.write(self.stream.read(section['sh_size']))
+        section_stream.write(section.data())
 
         if relocate_dwarf_sections:
             reloc_handler = RelocationHandler(self)
@@ -407,7 +416,8 @@ class ELFFile(object):
                 stream=section_stream,
                 name=section.name,
                 global_offset=section['sh_offset'],
-                size=section['sh_size'])
+                size=section['sh_size'],
+                address=section['sh_addr'])
 
     @staticmethod
     def _decompress_dwarf_section(section):

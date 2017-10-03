@@ -11,7 +11,7 @@ from ..construct import (
     UBInt8, UBInt16, UBInt32, UBInt64,
     ULInt8, ULInt16, ULInt32, ULInt64,
     SBInt32, SLInt32, SBInt64, SLInt64,
-    Struct, Array, Enum, Padding, BitStruct, BitField, Value,
+    Struct, Array, Enum, Padding, BitStruct, BitField, Value, String, CString,
     )
 
 from .enums import *
@@ -43,9 +43,11 @@ class ELFStructs(object):
         assert elfclass == 32 or elfclass == 64
         self.little_endian = little_endian
         self.elfclass = elfclass
-        self._create_structs()
 
-    def _create_structs(self):
+    def create_basic_structs(self):
+        """ Create word-size related structs and ehdr struct needed for
+            initial determining of ELF type.
+        """
         if self.little_endian:
             self.Elf_byte = ULInt8
             self.Elf_half = ULInt16
@@ -66,10 +68,15 @@ class ELFStructs(object):
             self.Elf_sword = SBInt32
             self.Elf_xword = UBInt32 if self.elfclass == 32 else UBInt64
             self.Elf_sxword = SBInt32 if self.elfclass == 32 else SBInt64
-
         self._create_ehdr()
+
+    def create_advanced_structs(self, elftype=None):
+        """ Create all ELF structs except the ehdr. They may possibly depend
+            on provided #elftype previously parsed from ehdr.
+        """
         self._create_phdr()
         self._create_shdr()
+        self._create_chdr()
         self._create_sym()
         self._create_rel()
         self._create_dyn()
@@ -77,8 +84,11 @@ class ELFStructs(object):
         self._create_gnu_verneed()
         self._create_gnu_verdef()
         self._create_gnu_versym()
-        self._create_note()
+        self._create_gnu_abi()
+        self._create_note(elftype)
         self._create_stabs()
+
+    #-------------------------------- PRIVATE --------------------------------#
 
     def _create_ehdr(self):
         self.Elf_Ehdr = Struct('Elf_Ehdr',
@@ -143,6 +153,20 @@ class ELFStructs(object):
             self.Elf_xword('sh_addralign'),
             self.Elf_xword('sh_entsize'),
         )
+
+    def _create_chdr(self):
+        # Structure of compressed sections header. It is documented in Oracle
+        # "Linker and Libraries Guide", Part IV ELF Application Binary
+        # Interface, Chapter 13 Object File Format, Section Compression:
+        # https://docs.oracle.com/cd/E53394_01/html/E54813/section_compression.html
+        fields = [
+            Enum(self.Elf_word('ch_type'), **ENUM_ELFCOMPRESS_TYPE),
+            self.Elf_xword('ch_size'),
+            self.Elf_xword('ch_addralign'),
+        ]
+        if self.elfclass == 64:
+            fields.insert(1, self.Elf_word('ch_reserved'))
+        self.Elf_Chdr = Struct('Elf_Chdr', *fields)
 
     def _create_rel(self):
         # r_info is also taken apart into r_info_sym and r_info_type.
@@ -217,7 +241,7 @@ class ELFStructs(object):
 
     def _create_gnu_verneed(self):
         # Structure of "version needed" entries is documented in
-        # Oracle "Linker and Libraries Guide", Chapter 7 Object File Format
+        # Oracle "Linker and Libraries Guide", Chapter 13 Object File Format
         self.Elf_Verneed = Struct('Elf_Verneed',
             self.Elf_half('vn_version'),
             self.Elf_half('vn_cnt'),
@@ -234,8 +258,8 @@ class ELFStructs(object):
         )
 
     def _create_gnu_verdef(self):
-        # Structure off "version definition" entries are documented in
-        # Oracle "Linker and Libraries Guide", Chapter 7 Object File Format
+        # Structure of "version definition" entries are documented in
+        # Oracle "Linker and Libraries Guide", Chapter 13 Object File Format
         self.Elf_Verdef = Struct('Elf_Verdef',
             self.Elf_half('vd_version'),
             self.Elf_half('vd_flags'),
@@ -251,25 +275,67 @@ class ELFStructs(object):
         )
 
     def _create_gnu_versym(self):
-        # Structure off "version symbol" entries are documented in
-        # Oracle "Linker and Libraries Guide", Chapter 7 Object File Format
+        # Structure of "version symbol" entries are documented in
+        # Oracle "Linker and Libraries Guide", Chapter 13 Object File Format
         self.Elf_Versym = Struct('Elf_Versym',
             Enum(self.Elf_half('ndx'), **ENUM_VERSYM),
         )
 
-    def _create_note(self):
-        # Structure of "PT_NOTE" section
-        self.Elf_Nhdr = Struct('Elf_Nhdr',
-            self.Elf_word('n_namesz'),
-            self.Elf_word('n_descsz'),
-            Enum(self.Elf_word('n_type'), **ENUM_NOTE_N_TYPE),
-        )
-        self.Elf_Nhdr_abi = Struct('Elf_Nhdr_abi',
+    def _create_gnu_abi(self):
+        # Structure of GNU ABI notes is documented in
+        # https://code.woboq.org/userspace/glibc/csu/abi-note.S.html
+        self.Elf_abi = Struct('Elf_abi',
             Enum(self.Elf_word('abi_os'), **ENUM_NOTE_ABI_TAG_OS),
             self.Elf_word('abi_major'),
             self.Elf_word('abi_minor'),
             self.Elf_word('abi_tiny'),
         )
+
+    def _create_note(self, elftype=None):
+        # Structure of "PT_NOTE" section
+        self.Elf_Nhdr = Struct('Elf_Nhdr',
+            self.Elf_word('n_namesz'),
+            self.Elf_word('n_descsz'),
+            Enum(self.Elf_word('n_type'),
+                 **(ENUM_NOTE_N_TYPE if elftype != "ET_CORE"
+                    else ENUM_CORE_NOTE_N_TYPE)),
+        )
+
+        # A process psinfo structure according to
+        # http://elixir.free-electrons.com/linux/v2.6.35/source/include/linux/elfcore.h#L84
+        if self.elfclass == 32:
+            self.Elf_Prpsinfo = Struct('Elf_Prpsinfo',
+                self.Elf_byte('pr_state'),
+                String('pr_sname', 1),
+                self.Elf_byte('pr_zomb'),
+                self.Elf_byte('pr_nice'),
+                self.Elf_xword('pr_flag'),
+                self.Elf_half('pr_uid'),
+                self.Elf_half('pr_gid'),
+                self.Elf_half('pr_pid'),
+                self.Elf_half('pr_ppid'),
+                self.Elf_half('pr_pgrp'),
+                self.Elf_half('pr_sid'),
+                String('pr_fname', 16),
+                String('pr_psargs', 80),
+            )
+        else: # 64
+            self.Elf_Prpsinfo = Struct('Elf_Prpsinfo',
+                self.Elf_byte('pr_state'),
+                String('pr_sname', 1),
+                self.Elf_byte('pr_zomb'),
+                self.Elf_byte('pr_nice'),
+                Padding(4),
+                self.Elf_xword('pr_flag'),
+                self.Elf_word('pr_uid'),
+                self.Elf_word('pr_gid'),
+                self.Elf_word('pr_pid'),
+                self.Elf_word('pr_ppid'),
+                self.Elf_word('pr_pgrp'),
+                self.Elf_word('pr_sid'),
+                String('pr_fname', 16),
+                String('pr_psargs', 80),
+            )
 
     def _create_stabs(self):
         # Structure of one stabs entry, see binutils/bfd/stabs.c

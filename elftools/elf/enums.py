@@ -47,6 +47,9 @@ ENUM_EI_OSABI = dict(
     ELFOSABI_OPENVMS=13,
     ELFOSABI_NSK=14,
     ELFOSABI_AROS=15,
+    ELFOSABI_FENIXOS=16,
+    ELFOSABI_CLOUD=17,
+    ELFOSABI_SORTIX=53,
     ELFOSABI_ARM_AEABI=64,
     ELFOSABI_ARM=97,
     ELFOSABI_STANDALONE=255,
@@ -284,6 +287,7 @@ ENUM_SH_TYPE = dict(
     SHT_SYMTAB_SHNDX=18,
     SHT_NUM=19,
     SHT_LOOS=0x60000000,
+    SHT_GNU_ATTRIBUTES=0x6ffffff5,
     SHT_GNU_HASH=0x6ffffff6,
     SHT_GNU_LIBLIST=0x6ffffff7,
     SHT_GNU_verdef=0x6ffffffd,  # also SHT_SUNW_verdef
@@ -335,6 +339,15 @@ ENUM_SH_TYPE = dict(
     SHT_MIPS_EH_REGION=0x70000027,
     SHT_MIPS_XLATE_OLD=0x70000028,
     SHT_MIPS_PDR_EXCEPTION=0x70000029,
+    _default_=Pass,
+)
+
+ENUM_ELFCOMPRESS_TYPE = dict(
+    ELFCOMPRESS_ZLIB=1,
+    ELFCOMPRESS_LOOS=0x60000000,
+    ELFCOMPRESS_HIOS=0x6fffffff,
+    ELFCOMPRESS_LOPROC=0x70000000,
+    ELFCOMPRESS_HIPROC=0x7fffffff,
     _default_=Pass,
 )
 
@@ -696,12 +709,24 @@ ENUM_SUNW_SYMINFO_BOUNDTO = dict(
     _default_=Pass,
 )
 
-# PT_NOTE section types
+# PT_NOTE section types for all ELF types except ET_CORE
 ENUM_NOTE_N_TYPE = dict(
     NT_GNU_ABI_TAG=1,
     NT_GNU_HWCAP=2,
     NT_GNU_BUILD_ID=3,
     NT_GNU_GOLD_VERSION=4,
+    _default_=Pass,
+)
+
+# PT_NOTE section types for ET_CORE
+ENUM_CORE_NOTE_N_TYPE = dict(
+    NT_PRSTATUS=1,
+    NT_FPREGSET=2,
+    NT_PRPSINFO=3,
+    NT_TASKSTRUCT=4,
+    NT_AUXV=6,
+    NT_SIGINFO=0x53494749,
+    NT_FILE=0x46494c45,
     _default_=Pass,
 )
 
