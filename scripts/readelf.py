@@ -7,8 +7,8 @@
 # Eli Bendersky (eliben@gmail.com)
 # This code is in the public domain
 #-------------------------------------------------------------------------------
+import argparse
 import os, sys
-from optparse import OptionParser
 import string
 
 # For running from development directory. It should take precedence over the
@@ -37,9 +37,10 @@ from elftools.elf.descriptions import (
     describe_sh_type, describe_sh_flags,
     describe_symbol_type, describe_symbol_bind, describe_symbol_visibility,
     describe_symbol_shndx, describe_reloc_type, describe_dyn_tag,
-    describe_ver_flags, describe_note
+    describe_ver_flags, describe_note, describe_attr_tag_arm
     )
 from elftools.elf.constants import E_FLAGS
+from elftools.elf.constants import E_FLAGS_MASKS
 from elftools.dwarf.dwarfinfo import DWARFInfo
 from elftools.dwarf.descriptions import (
     describe_reg_name, describe_attr_value, set_global_machine_arch,
@@ -134,17 +135,45 @@ class ReadElf(object):
                 if flags:
                     description += ', <unknown>'
             else:
-                desrciption += ', <unrecognized EABI>'
+                description += ', <unrecognized EABI>'
 
         elif self.elffile['e_machine'] == "EM_MIPS":
             if flags & E_FLAGS.EF_MIPS_NOREORDER:
                 description += ", noreorder"
+            if flags & E_FLAGS.EF_MIPS_PIC:
+                description += ", pic"
             if flags & E_FLAGS.EF_MIPS_CPIC:
                 description += ", cpic"
-            if not (flags & E_FLAGS.EF_MIPS_ABI2) and not (flags & E_FLAGS.EF_MIPS_ABI_ON32):
+            if (flags & E_FLAGS.EF_MIPS_ABI2):
+                description += ", abi2"
+            if (flags & E_FLAGS.EF_MIPS_32BITMODE):
+                description += ", 32bitmode"
+            if (flags & E_FLAGS_MASKS.EFM_MIPS_ABI_O32):
                 description += ", o32"
+            elif (flags & E_FLAGS_MASKS.EFM_MIPS_ABI_O64):
+                description += ", o64"
+            elif (flags & E_FLAGS_MASKS.EFM_MIPS_ABI_EABI32):
+                description += ", eabi32"
+            elif (flags & E_FLAGS_MASKS.EFM_MIPS_ABI_EABI64):
+                description += ", eabi64"
             if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_1:
                 description += ", mips1"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_2:
+                description += ", mips2"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_3:
+                description += ", mips3"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_4:
+                description += ", mips4"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_5:
+                description += ", mips5"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_32R2:
+                description += ", mips32r2"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_64R2:
+                description += ", mips64r2"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_32:
+                description += ", mips32"
+            if (flags & E_FLAGS.EF_MIPS_ARCH) == E_FLAGS.EF_MIPS_ARCH_64:
+                description += ", mips64"
 
         return description
 
@@ -588,6 +617,12 @@ class ReadElf(object):
                         vernaux_offset += vernaux['vna_next']
 
                     offset += verneed['vn_next']
+
+    def display_arch_specific(self):
+        """ Display the architecture-specific info contained in the file.
+        """
+        if self.elffile['e_machine'] == 'EM_ARM':
+            self._display_arch_specific_arm()
 
     def display_hex_dump(self, section_spec):
         """ Display a hex dump of a section. section_spec is either a section
@@ -1136,13 +1171,17 @@ class ReadElf(object):
                 self._emitline('\n%08x ZERO terminator' % entry.offset)
                 continue
 
+            # Decode the table.
+            decoded_table = entry.get_decoded()
+            if len(decoded_table.table) == 0:
+                continue
 
             # Print the heading row for the decoded table
             self._emit('   LOC')
             self._emit('  ' if entry.structs.address_size == 4 else '          ')
             self._emit(' CFA      ')
 
-            # Decode the table and look at the registers it describes.
+            # Look at the registers the decoded table describes.
             # We build reg_order here to match readelf's order. In particular,
             # registers are sorted by their number, and the register matching
             # ra_regnum is always listed last with a special heading.
@@ -1166,7 +1205,12 @@ class ReadElf(object):
             for line in decoded_table.table:
                 self._emit(self._format_hex(
                     line['pc'], fullhex=True, lead0x=False))
-                self._emit(' %-9s' % describe_CFI_CFA_rule(line['cfa']))
+
+                if line['cfa'] is not None:
+                    s = describe_CFI_CFA_rule(line['cfa'])
+                else:
+                    s = 'u'
+                self._emit(' %-9s' % s)
 
                 for regnum in reg_order:
                     if regnum in line:
@@ -1192,6 +1236,23 @@ class ReadElf(object):
                     self._dwarfinfo.debug_frame_sec,
                     self._dwarfinfo.CFI_entries())
 
+    def _display_arch_specific_arm(self):
+        """ Display the ARM architecture-specific info contained in the file.
+        """
+        attr_sec = self.elffile.get_section_by_name('.ARM.attributes')
+
+        for s in attr_sec.iter_subsections():
+            self._emitline("Attribute Section: %s" % s.header['vendor_name'])
+            for ss in s.iter_subsubsections():
+                h_val = "" if ss.header.extra is None else " ".join("%d" % x for x in ss.header.extra)
+                self._emitline(describe_attr_tag_arm(ss.header.tag, h_val, None))
+
+                for attr in ss.iter_attributes():
+                    self._emit('  ')
+                    self._emitline(describe_attr_tag_arm(attr.tag,
+                                                         attr.value,
+                                                         attr.extra))
+
     def _emit(self, s=''):
         """ Emit an object to output
         """
@@ -1204,73 +1265,80 @@ class ReadElf(object):
 
 
 SCRIPT_DESCRIPTION = 'Display information about the contents of ELF format files'
-VERSION_STRING = '%%prog: based on pyelftools %s' % __version__
+VERSION_STRING = '%%(prog)s: based on pyelftools %s' % __version__
 
 
 def main(stream=None):
     # parse the command-line arguments and invoke ReadElf
-    optparser = OptionParser(
-            usage='usage: %prog [options] <elf-file>',
+    argparser = argparse.ArgumentParser(
+            usage='usage: %(prog)s [options] <elf-file>',
             description=SCRIPT_DESCRIPTION,
-            add_help_option=False, # -h is a real option of readelf
-            prog='readelf.py',
-            version=VERSION_STRING)
-    optparser.add_option('-d', '--dynamic',
+            add_help=False, # -h is a real option of readelf
+            prog='readelf.py')
+    argparser.add_argument('file',
+            nargs='?', default=None,
+            help='ELF file to parse')
+    argparser.add_argument('-v', '--version',
+            action='version', version=VERSION_STRING)
+    argparser.add_argument('-d', '--dynamic',
             action='store_true', dest='show_dynamic_tags',
             help='Display the dynamic section')
-    optparser.add_option('-H', '--help',
+    argparser.add_argument('-H', '--help',
             action='store_true', dest='help',
             help='Display this information')
-    optparser.add_option('-h', '--file-header',
+    argparser.add_argument('-h', '--file-header',
             action='store_true', dest='show_file_header',
             help='Display the ELF file header')
-    optparser.add_option('-l', '--program-headers', '--segments',
+    argparser.add_argument('-l', '--program-headers', '--segments',
             action='store_true', dest='show_program_header',
             help='Display the program headers')
-    optparser.add_option('-S', '--section-headers', '--sections',
+    argparser.add_argument('-S', '--section-headers', '--sections',
             action='store_true', dest='show_section_header',
             help="Display the sections' headers")
-    optparser.add_option('-e', '--headers',
+    argparser.add_argument('-e', '--headers',
             action='store_true', dest='show_all_headers',
             help='Equivalent to: -h -l -S')
-    optparser.add_option('-s', '--symbols', '--syms',
+    argparser.add_argument('-s', '--symbols', '--syms',
             action='store_true', dest='show_symbols',
             help='Display the symbol table')
-    optparser.add_option('-n', '--notes',
+    argparser.add_argument('-n', '--notes',
             action='store_true', dest='show_notes',
             help='Display the core notes (if present)')
-    optparser.add_option('-r', '--relocs',
+    argparser.add_argument('-r', '--relocs',
             action='store_true', dest='show_relocs',
             help='Display the relocations (if present)')
-    optparser.add_option('-x', '--hex-dump',
+    argparser.add_argument('-x', '--hex-dump',
             action='store', dest='show_hex_dump', metavar='<number|name>',
             help='Dump the contents of section <number|name> as bytes')
-    optparser.add_option('-p', '--string-dump',
+    argparser.add_argument('-p', '--string-dump',
             action='store', dest='show_string_dump', metavar='<number|name>',
             help='Dump the contents of section <number|name> as strings')
-    optparser.add_option('-V', '--version-info',
+    argparser.add_argument('-V', '--version-info',
             action='store_true', dest='show_version_info',
             help='Display the version sections (if present)')
-    optparser.add_option('--debug-dump',
+    argparser.add_argument('-A', '--arch-specific',
+            action='store_true', dest='show_arch_specific',
+            help='Display the architecture-specific information (if present)')
+    argparser.add_argument('--debug-dump',
             action='store', dest='debug_dump_what', metavar='<what>',
             help=(
                 'Display the contents of DWARF debug sections. <what> can ' +
                 'one of {info,decodedline,frames,frames-interp}'))
 
-    options, args = optparser.parse_args()
+    args = argparser.parse_args()
 
-    if options.help or len(args) == 0:
-        optparser.print_help()
+    if args.help or not args.file:
+        argparser.print_help()
         sys.exit(0)
 
-    if options.show_all_headers:
+    if args.show_all_headers:
         do_file_header = do_section_header = do_program_header = True
     else:
-        do_file_header = options.show_file_header
-        do_section_header = options.show_section_header
-        do_program_header = options.show_program_header
+        do_file_header = args.show_file_header
+        do_section_header = args.show_section_header
+        do_program_header = args.show_program_header
 
-    with open(args[0], 'rb') as file:
+    with open(args.file, 'rb') as file:
         try:
             readelf = ReadElf(file, stream or sys.stdout)
             if do_file_header:
@@ -1281,22 +1349,24 @@ def main(stream=None):
             if do_program_header:
                 readelf.display_program_headers(
                         show_heading=not do_file_header)
-            if options.show_dynamic_tags:
+            if args.show_dynamic_tags:
                 readelf.display_dynamic_tags()
-            if options.show_symbols:
+            if args.show_symbols:
                 readelf.display_symbol_tables()
-            if options.show_notes:
+            if args.show_notes:
                 readelf.display_notes()
-            if options.show_relocs:
+            if args.show_relocs:
                 readelf.display_relocations()
-            if options.show_version_info:
+            if args.show_version_info:
                 readelf.display_version_info()
-            if options.show_hex_dump:
-                readelf.display_hex_dump(options.show_hex_dump)
-            if options.show_string_dump:
-                readelf.display_string_dump(options.show_string_dump)
-            if options.debug_dump_what:
-                readelf.display_debug_dump(options.debug_dump_what)
+            if args.show_arch_specific:
+                readelf.display_arch_specific()
+            if args.show_hex_dump:
+                readelf.display_hex_dump(args.show_hex_dump)
+            if args.show_string_dump:
+                readelf.display_string_dump(args.show_string_dump)
+            if args.debug_dump_what:
+                readelf.display_debug_dump(args.debug_dump_what)
         except ELFError as ex:
             sys.stderr.write('ELF error: %s\n' % ex)
             sys.exit(1)

@@ -25,7 +25,7 @@ from .structs import ELFStructs
 from .sections import (
         Section, StringTableSection, SymbolTableSection,
         SUNWSyminfoTableSection, NullSection, NoteSection,
-        StabSection)
+        StabSection, ARMAttributesSection)
 from .dynamic import DynamicSection, DynamicSegment
 from .relocation import RelocationSection, RelocationHandler
 from .gnuversions import (
@@ -71,8 +71,10 @@ class ELFFile(object):
 
         self.structs.create_basic_structs()
         self.header = self._parse_elf_header()
-        self.elftype = self['e_type']
-        self.structs.create_advanced_structs(self.elftype)
+        self.structs.create_advanced_structs(
+                self['e_type'],
+                self['e_machine'],
+                self['e_ident']['EI_OSABI'])
         self.stream.seek(0)
         self.e_ident_raw = self.stream.read(16)
 
@@ -136,6 +138,9 @@ class ELFFile(object):
         """
         end = start + size
         for seg in self.iter_segments():
+            # consider LOAD only to prevent same address being yielded twice
+            if seg['p_type'] != 'PT_LOAD':
+                continue
             if (start >= seg['p_vaddr'] and
                 end <= seg['p_vaddr'] + seg['p_filesz']):
                 yield start - seg['p_vaddr'] + seg['p_offset']
@@ -203,7 +208,6 @@ class ELFFile(object):
                 debug_loc_sec=debug_sections[debug_loc_sec_name],
                 debug_ranges_sec=debug_sections[debug_ranges_sec_name],
                 debug_line_sec=debug_sections[debug_line_sec_name])
-
 
     def get_machine_arch(self):
         """ Return the machine architecture, as detected from the ELF header.
@@ -321,6 +325,8 @@ class ELFFile(object):
             return NoteSection(section_header, name, self)
         elif sectype == 'SHT_PROGBITS' and name == '.stab':
             return StabSection(section_header, name, self)
+        elif sectype == 'SHT_ARM_ATTRIBUTES':
+            return ARMAttributesSection(section_header, name, self)
         else:
             return Section(section_header, name, self)
 

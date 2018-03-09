@@ -11,9 +11,9 @@ from ..construct import (
     UBInt8, UBInt16, UBInt32, UBInt64,
     ULInt8, ULInt16, ULInt32, ULInt64,
     SBInt32, SLInt32, SBInt64, SLInt64,
-    Struct, Array, Enum, Padding, BitStruct, BitField, Value, String, CString,
+    Struct, Array, Enum, Padding, BitStruct, BitField, Value, String, CString
     )
-
+from ..common.construct_utils import ULEB128
 from .enums import *
 
 
@@ -69,24 +69,27 @@ class ELFStructs(object):
             self.Elf_xword = UBInt32 if self.elfclass == 32 else UBInt64
             self.Elf_sxword = SBInt32 if self.elfclass == 32 else SBInt64
         self._create_ehdr()
+        self._create_leb128()
+        self._create_ntbs()
 
-    def create_advanced_structs(self, elftype=None):
+    def create_advanced_structs(self, e_type=None, e_machine=None, e_ident_osabi=None):
         """ Create all ELF structs except the ehdr. They may possibly depend
-            on provided #elftype previously parsed from ehdr.
+            on provided e_type and/or e_machine parsed from ehdr.
         """
-        self._create_phdr()
-        self._create_shdr()
+        self._create_phdr(e_machine)
+        self._create_shdr(e_machine)
         self._create_chdr()
         self._create_sym()
         self._create_rel()
-        self._create_dyn()
+        self._create_dyn(e_machine, e_ident_osabi)
         self._create_sunw_syminfo()
         self._create_gnu_verneed()
         self._create_gnu_verdef()
         self._create_gnu_versym()
         self._create_gnu_abi()
-        self._create_note(elftype)
+        self._create_note(e_type)
         self._create_stabs()
+        self._create_arm_attributes()
 
     #-------------------------------- PRIVATE --------------------------------#
 
@@ -116,10 +119,24 @@ class ELFStructs(object):
             self.Elf_half('e_shstrndx'),
         )
 
-    def _create_phdr(self):
+    def _create_leb128(self):
+        self.Elf_uleb128 = ULEB128
+
+    def _create_ntbs(self):
+        self.Elf_ntbs = CString
+
+    def _create_phdr(self, e_machine=None):
+        p_type_dict = ENUM_P_TYPE_BASE
+        if e_machine == 'EM_ARM':
+            p_type_dict = ENUM_P_TYPE_ARM
+        elif e_machine == 'EM_AARCH64':
+            p_type_dict = ENUM_P_TYPE_AARCH64
+        elif e_machine == 'EM_MIPS':
+            p_type_dict = ENUM_P_TYPE_MIPS
+
         if self.elfclass == 32:
             self.Elf_Phdr = Struct('Elf_Phdr',
-                Enum(self.Elf_word('p_type'), **ENUM_P_TYPE),
+                Enum(self.Elf_word('p_type'), **p_type_dict),
                 self.Elf_offset('p_offset'),
                 self.Elf_addr('p_vaddr'),
                 self.Elf_addr('p_paddr'),
@@ -130,7 +147,7 @@ class ELFStructs(object):
             )
         else: # 64
             self.Elf_Phdr = Struct('Elf_Phdr',
-                Enum(self.Elf_word('p_type'), **ENUM_P_TYPE),
+                Enum(self.Elf_word('p_type'), **p_type_dict),
                 self.Elf_word('p_flags'),
                 self.Elf_offset('p_offset'),
                 self.Elf_addr('p_vaddr'),
@@ -140,10 +157,22 @@ class ELFStructs(object):
                 self.Elf_xword('p_align'),
             )
 
-    def _create_shdr(self):
+    def _create_shdr(self, e_machine=None):
+        """Section header parsing.
+
+        Depends on e_machine because of machine-specific values in sh_type.
+        """
+        sh_type_dict = ENUM_SH_TYPE_BASE
+        if e_machine == 'EM_ARM':
+            sh_type_dict = ENUM_SH_TYPE_ARM
+        elif e_machine == 'EM_X86_64':
+            sh_type_dict = ENUM_SH_TYPE_AMD64
+        elif e_machine == 'EM_MIPS':
+            sh_type_dict = ENUM_SH_TYPE_MIPS
+
         self.Elf_Shdr = Struct('Elf_Shdr',
             self.Elf_word('sh_name'),
-            Enum(self.Elf_word('sh_type'), **ENUM_SH_TYPE),
+            Enum(self.Elf_word('sh_type'), **sh_type_dict),
             self.Elf_xword('sh_flags'),
             self.Elf_addr('sh_addr'),
             self.Elf_offset('sh_offset'),
@@ -196,9 +225,15 @@ class ELFStructs(object):
             self.Elf_sxword('r_addend'),
         )
 
-    def _create_dyn(self):
+    def _create_dyn(self, e_machine=None, e_ident_osabi=None):
+        d_tag_dict = dict(ENUM_D_TAG_COMMON)
+        if e_machine in ENUMMAP_EXTRA_D_TAG_MACHINE:
+            d_tag_dict.update(ENUMMAP_EXTRA_D_TAG_MACHINE[e_machine])
+        elif e_ident_osabi == 'ELFOSABI_SOLARIS':
+            d_tag_dict.update(ENUM_D_TAG_SOLARIS)
+
         self.Elf_Dyn = Struct('Elf_Dyn',
-            Enum(self.Elf_sxword('d_tag'), **ENUM_D_TAG),
+            Enum(self.Elf_sxword('d_tag'), **d_tag_dict),
             self.Elf_xword('d_val'),
             Value('d_ptr', lambda ctx: ctx['d_val']),
         )
@@ -291,13 +326,13 @@ class ELFStructs(object):
             self.Elf_word('abi_tiny'),
         )
 
-    def _create_note(self, elftype=None):
+    def _create_note(self, e_type=None):
         # Structure of "PT_NOTE" section
         self.Elf_Nhdr = Struct('Elf_Nhdr',
             self.Elf_word('n_namesz'),
             self.Elf_word('n_descsz'),
             Enum(self.Elf_word('n_type'),
-                 **(ENUM_NOTE_N_TYPE if elftype != "ET_CORE"
+                 **(ENUM_NOTE_N_TYPE if e_type != "ET_CORE"
                     else ENUM_CORE_NOTE_N_TYPE)),
         )
 
@@ -346,4 +381,20 @@ class ELFStructs(object):
             self.Elf_byte('n_other'),
             self.Elf_half('n_desc'),
             self.Elf_word('n_value'),
+        )
+
+    def _create_arm_attributes(self):
+        # Structure of a build attributes subsection header. A subsection is
+        # either public to all tools that process the ELF file or private to
+        # the vendor's tools.
+        self.Elf_Attr_Subsection_Header = Struct('Elf_Attr_Subsection',
+                                                 self.Elf_word('length'),
+                                                 self.Elf_ntbs('vendor_name',
+                                                               encoding='utf-8')
+        )
+
+        # Structure of a build attribute tag.
+        self.Elf_Attribute_Tag = Struct('Elf_Attribute_Tag',
+                                        Enum(self.Elf_uleb128('tag'),
+                                             **ENUM_ATTR_TAG_ARM)
         )

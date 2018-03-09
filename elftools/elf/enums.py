@@ -6,6 +6,7 @@
 # Eli Bendersky (eliben@gmail.com)
 # This code is in the public domain
 #-------------------------------------------------------------------------------
+from ..common.utils import merge_dicts
 from ..construct import Pass
 
 
@@ -262,12 +263,17 @@ ENUM_E_MACHINE = dict(
     # reserved  145-159 Reserved for future use
     # reserved  182     Reserved for future Intel use
     # reserved  184     Reserved for future ARM use
-    # unknown/reserve?  225 - 242   
+    # unknown/reserve?  225 - 242
     _default_=Pass,
 )
 
 # sh_type in the section header
-ENUM_SH_TYPE = dict(
+#
+# This is the "base" dict that doesn't hold processor-specific values; from it
+# we later create per-processor dicts that use the LOPROC...HIPROC range to
+# define processor-specific values. The proper dict should be used based on the
+# machine the ELF header refers to.
+ENUM_SH_TYPE_BASE = dict(
     SHT_NULL=0,
     SHT_PROGBITS=1,
     SHT_SYMTAB=2,
@@ -293,54 +299,69 @@ ENUM_SH_TYPE = dict(
     SHT_GNU_verdef=0x6ffffffd,  # also SHT_SUNW_verdef
     SHT_GNU_verneed=0x6ffffffe, # also SHT_SUNW_verneed
     SHT_GNU_versym=0x6fffffff,  # also SHT_SUNW_versym, SHT_HIOS
-    SHT_LOPROC=0x70000000,
-    SHT_HIPROC=0x7fffffff,
+
+    # These are commented out because they carry no semantic meaning in
+    # themselves and may be overridden by target-specific enums.
+    #SHT_LOPROC=0x70000000,
+    #SHT_HIPROC=0x7fffffff,
+
     SHT_LOUSER=0x80000000,
     SHT_HIUSER=0xffffffff,
-    SHT_AMD64_UNWIND=0x70000001,
     SHT_SUNW_LDYNSYM=0x6ffffff3,
     SHT_SUNW_syminfo=0x6ffffffc,
-    SHT_ARM_EXIDX=0x70000001,        # also SHT_MIPS_MSYM
-    SHT_ARM_PREEMPTMAP=0x70000002,   # also SHT_MIPS_CONFLICT
-    SHT_ARM_ATTRIBUTES=0x70000003,   # also SHT_MIPS_GPTAB
-    SHT_ARM_DEBUGOVERLAY=0x70000004, # also SHT_MIPS_UCODE
-    SHT_MIPS_LIBLIST=0x70000000,
-    SHT_MIPS_DEBUG=0x70000005,
-    SHT_MIPS_REGINFO=0x70000006,
-    SHT_MIPS_PACKAGE=0x70000007,
-    SHT_MIPS_PACKSYM=0x70000008,
-    SHT_MIPS_RELD=0x70000009,
-    SHT_MIPS_IFACE=0x7000000b,
-    SHT_MIPS_CONTENT=0x7000000c,
-    SHT_MIPS_OPTIONS=0x7000000d,
-    SHT_MIPS_SHDR=0x70000010,
-    SHT_MIPS_FDESC=0x70000011,
-    SHT_MIPS_EXTSYM=0x70000012,
-    SHT_MIPS_DENSE=0x70000013,
-    SHT_MIPS_PDESC=0x70000014,
-    SHT_MIPS_LOCSYM=0x70000015,
-    SHT_MIPS_AUXSYM=0x70000016,
-    SHT_MIPS_OPTSYM=0x70000017,
-    SHT_MIPS_LOCSTR=0x70000018,
-    SHT_MIPS_LINE=0x70000019,
-    SHT_MIPS_RFDESC=0x7000001a,
-    SHT_MIPS_DELTASYM=0x7000001b,
-    SHT_MIPS_DELTAINST=0x7000001c,
-    SHT_MIPS_DELTACLASS=0x7000001d,
-    SHT_MIPS_DWARF=0x7000001e,
-    SHT_MIPS_DELTADECL=0x7000001f,
-    SHT_MIPS_SYMBOL_LIB=0x70000020,
-    SHT_MIPS_EVENTS=0x70000021,
-    SHT_MIPS_TRANSLATE=0x70000022,
-    SHT_MIPS_PIXIE=0x70000023,
-    SHT_MIPS_XLATE=0x70000024,
-    SHT_MIPS_XLATE_DEBUG=0x70000025,
-    SHT_MIPS_WHIRL=0x70000026,
-    SHT_MIPS_EH_REGION=0x70000027,
-    SHT_MIPS_XLATE_OLD=0x70000028,
-    SHT_MIPS_PDR_EXCEPTION=0x70000029,
     _default_=Pass,
 )
+
+ENUM_SH_TYPE_AMD64 = merge_dicts(
+        ENUM_SH_TYPE_BASE,
+        dict(SHT_AMD64_UNWIND=0x70000001))
+
+ENUM_SH_TYPE_ARM = merge_dicts(
+        ENUM_SH_TYPE_BASE,
+        dict(
+            SHT_ARM_EXIDX=0x70000001,
+            SHT_ARM_PREEMPTMAP=0x70000002,
+            SHT_ARM_ATTRIBUTES=0x70000003,
+            SHT_ARM_DEBUGOVERLAY=0x70000004))
+
+ENUM_SH_TYPE_MIPS = merge_dicts(
+        ENUM_SH_TYPE_BASE,
+        dict(
+            SHT_MIPS_LIBLIST=0x70000000,
+            SHT_MIPS_DEBUG=0x70000005,
+            SHT_MIPS_REGINFO=0x70000006,
+            SHT_MIPS_PACKAGE=0x70000007,
+            SHT_MIPS_PACKSYM=0x70000008,
+            SHT_MIPS_RELD=0x70000009,
+            SHT_MIPS_IFACE=0x7000000b,
+            SHT_MIPS_CONTENT=0x7000000c,
+            SHT_MIPS_OPTIONS=0x7000000d,
+            SHT_MIPS_SHDR=0x70000010,
+            SHT_MIPS_FDESC=0x70000011,
+            SHT_MIPS_EXTSYM=0x70000012,
+            SHT_MIPS_DENSE=0x70000013,
+            SHT_MIPS_PDESC=0x70000014,
+            SHT_MIPS_LOCSYM=0x70000015,
+            SHT_MIPS_AUXSYM=0x70000016,
+            SHT_MIPS_OPTSYM=0x70000017,
+            SHT_MIPS_LOCSTR=0x70000018,
+            SHT_MIPS_LINE=0x70000019,
+            SHT_MIPS_RFDESC=0x7000001a,
+            SHT_MIPS_DELTASYM=0x7000001b,
+            SHT_MIPS_DELTAINST=0x7000001c,
+            SHT_MIPS_DELTACLASS=0x7000001d,
+            SHT_MIPS_DWARF=0x7000001e,
+            SHT_MIPS_DELTADECL=0x7000001f,
+            SHT_MIPS_SYMBOL_LIB=0x70000020,
+            SHT_MIPS_EVENTS=0x70000021,
+            SHT_MIPS_TRANSLATE=0x70000022,
+            SHT_MIPS_PIXIE=0x70000023,
+            SHT_MIPS_XLATE=0x70000024,
+            SHT_MIPS_XLATE_DEBUG=0x70000025,
+            SHT_MIPS_WHIRL=0x70000026,
+            SHT_MIPS_EH_REGION=0x70000027,
+            SHT_MIPS_XLATE_OLD=0x70000028,
+            SHT_MIPS_PDR_EXCEPTION=0x70000029))
 
 ENUM_ELFCOMPRESS_TYPE = dict(
     ELFCOMPRESS_ZLIB=1,
@@ -353,7 +374,9 @@ ENUM_ELFCOMPRESS_TYPE = dict(
 
 # p_type in the program header
 # some values scavenged from the ELF headers in binutils-2.21
-ENUM_P_TYPE = dict(
+#
+# Using the same base + per-processor augmentation technique as in sh_type.
+ENUM_P_TYPE_BASE = dict(
     PT_NULL=0,
     PT_LOAD=1,
     PT_DYNAMIC=2,
@@ -364,17 +387,33 @@ ENUM_P_TYPE = dict(
     PT_TLS=7,
     PT_LOOS=0x60000000,
     PT_HIOS=0x6fffffff,
-    PT_LOPROC=0x70000000,
-    PT_HIPROC=0x7fffffff,
+
+    # These are commented out because they carry no semantic meaning in
+    # themselves and may be overridden by target-specific enums.
+    #PT_LOPROC=0x70000000,
+    #PT_HIPROC=0x7fffffff,
+
     PT_GNU_EH_FRAME=0x6474e550,
     PT_GNU_STACK=0x6474e551,
     PT_GNU_RELRO=0x6474e552,
-    PT_ARM_ARCHEXT=0x70000000,
-    PT_ARM_EXIDX=0x70000001,
-    PT_AARCH64_ARCHEXT=0x70000000,
-    PT_AARCH64_UNWIND=0x70000001,
     _default_=Pass,
 )
+
+ENUM_P_TYPE_ARM = merge_dicts(
+        ENUM_P_TYPE_BASE,
+        dict(
+            PT_ARM_ARCHEXT=0x70000000,
+            PT_ARM_EXIDX=0x70000001))
+
+ENUM_P_TYPE_AARCH64 = merge_dicts(
+        ENUM_P_TYPE_BASE,
+        dict(
+            PT_AARCH64_ARCHEXT=0x70000000,
+            PT_AARCH64_UNWIND=0x70000001))
+
+ENUM_P_TYPE_MIPS = merge_dicts(
+        ENUM_P_TYPE_BASE,
+        dict(PT_MIPS_ABIFLAGS=0x70000003))
 
 # st_info bindings in the symbol header
 ENUM_ST_INFO_BIND = dict(
@@ -429,7 +468,7 @@ ENUM_ST_SHNDX = dict(
 )
 
 # d_tag
-ENUM_D_TAG = dict(
+ENUM_D_TAG_COMMON = dict(
     DT_NULL=0,
     DT_NEEDED=1,
     DT_PLTRELSZ=2,
@@ -466,24 +505,6 @@ ENUM_D_TAG = dict(
     DT_PREINIT_ARRAYSZ=33,
     DT_NUM=34,
     DT_LOOS=0x6000000d,
-    DT_SUNW_AUXILIARY=0x6000000d,
-    DT_SUNW_RTLDINF=0x6000000e,
-    DT_SUNW_FILTER=0x6000000f,
-    DT_SUNW_CAP=0x60000010,
-    DT_SUNW_SYMTAB=0x60000011,
-    DT_SUNW_SYMSZ=0x60000012,
-    DT_SUNW_ENCODING=0x60000013,
-    DT_SUNW_SORTENT=0x60000013,
-    DT_SUNW_SYMSORT=0x60000014,
-    DT_SUNW_SYMSORTSZ=0x60000015,
-    DT_SUNW_TLSSORT=0x60000016,
-    DT_SUNW_TLSSORTSZ=0x60000017,
-    DT_SUNW_CAPINFO=0x60000018,
-    DT_SUNW_STRPAD=0x60000019,
-    DT_SUNW_CAPCHAIN=0x6000001a,
-    DT_SUNW_LDMACH=0x6000001b,
-    DT_SUNW_CAPCHAINENT=0x6000001d,
-    DT_SUNW_CAPCHAINSZ=0x6000001f,
     DT_HIOS=0x6ffff000,
     DT_LOPROC=0x70000000,
     DT_HIPROC=0x7fffffff,
@@ -517,6 +538,36 @@ ENUM_D_TAG = dict(
     DT_VERDEFNUM=0x6ffffffd,
     DT_VERNEED=0x6ffffffe,
     DT_VERNEEDNUM=0x6fffffff,
+    DT_AUXILIARY=0x7ffffffd,
+    DT_FILTER=0x7fffffff,
+    _default_=Pass,
+)
+
+# Above are the dynamic tags which are valid always.
+# Below are the dynamic tags which are only valid in certain contexts.
+
+ENUM_D_TAG_SOLARIS = dict(
+    DT_SUNW_AUXILIARY=0x6000000d,
+    DT_SUNW_RTLDINF=0x6000000e,
+    DT_SUNW_FILTER=0x6000000f,
+    DT_SUNW_CAP=0x60000010,
+    DT_SUNW_SYMTAB=0x60000011,
+    DT_SUNW_SYMSZ=0x60000012,
+    DT_SUNW_ENCODING=0x60000013,
+    DT_SUNW_SORTENT=0x60000013,
+    DT_SUNW_SYMSORT=0x60000014,
+    DT_SUNW_SYMSORTSZ=0x60000015,
+    DT_SUNW_TLSSORT=0x60000016,
+    DT_SUNW_TLSSORTSZ=0x60000017,
+    DT_SUNW_CAPINFO=0x60000018,
+    DT_SUNW_STRPAD=0x60000019,
+    DT_SUNW_CAPCHAIN=0x6000001a,
+    DT_SUNW_LDMACH=0x6000001b,
+    DT_SUNW_CAPCHAINENT=0x6000001d,
+    DT_SUNW_CAPCHAINSZ=0x6000001f,
+)
+
+ENUM_D_TAG_MIPS = dict(
     DT_MIPS_RLD_VERSION=0x70000001,
     DT_MIPS_TIME_STAMP=0x70000002,
     DT_MIPS_ICHECKSUM=0x70000003,
@@ -534,10 +585,25 @@ ENUM_D_TAG = dict(
     DT_MIPS_HIPAGENO=0x70000014,
     DT_MIPS_RLD_MAP=0x70000016,
     DT_MIPS_RLD_MAP_REL=0x70000035,
-    DT_AUXILIARY=0x7ffffffd,
-    DT_FILTER=0x7fffffff,
-    _default_=Pass,
 )
+
+# Here is the mapping from e_machine enum to the extra dynamic tags which it
+# validates. Solaris is missing from this list because its inclusion is not
+# controlled by e_machine but rather e_ident[EI_OSABI].
+# TODO: add the rest of the machine-specific dynamic tags, not just mips and
+# solaris
+
+ENUMMAP_EXTRA_D_TAG_MACHINE = dict(
+    EM_MIPS=ENUM_D_TAG_MIPS,
+    EM_MIPS_RS3_LE=ENUM_D_TAG_MIPS,
+)
+
+# Here is the full combined mapping from tag name to value
+
+ENUM_D_TAG = dict(ENUM_D_TAG_COMMON)
+ENUM_D_TAG.update(ENUM_D_TAG_SOLARIS)
+for k in ENUMMAP_EXTRA_D_TAG_MACHINE:
+    ENUM_D_TAG.update(ENUMMAP_EXTRA_D_TAG_MACHINE[k])
 
 ENUM_RELOC_TYPE_MIPS = dict(
     R_MIPS_NONE=0,
@@ -700,6 +766,7 @@ ENUM_VERSYM = dict(
     VER_NDX_ELIMINATE=0xff01,
     _default_=Pass,
 )
+
 # Sunw Syminfo Bound To special values
 ENUM_SUNW_SYMINFO_BOUNDTO = dict(
     SYMINFO_BT_SELF=0xffff,
@@ -982,4 +1049,50 @@ ENUM_RELOC_TYPE_AARCH64 = dict(
     R_AARCH64_TLS_DTPREL32=1031,
     R_AARCH64_TLS_DTPMOD32=1032,
     R_AARCH64_TLS_TPREL32=1033,
+)
+
+ENUM_ATTR_TAG_ARM = dict(
+    TAG_FILE=1,
+    TAG_SECTION=2,
+    TAG_SYMBOL=3,
+    TAG_CPU_RAW_NAME=4,
+    TAG_CPU_NAME=5,
+    TAG_CPU_ARCH=6,
+    TAG_CPU_ARCH_PROFILE=7,
+    TAG_ARM_ISA_USE=8,
+    TAG_THUMB_ISA_USE=9,
+    TAG_FP_ARCH=10,
+    TAG_WMMX_ARCH=11,
+    TAG_ADVANCED_SIMD_ARCH=12,
+    TAG_PCS_CONFIG=13,
+    TAG_ABI_PCS_R9_USE=14,
+    TAG_ABI_PCS_RW_DATA=15,
+    TAG_ABI_PCS_RO_DATA=16,
+    TAG_ABI_PCS_GOT_USE=17,
+    TAG_ABI_PCS_WCHAR_T=18,
+    TAG_ABI_FP_ROUNDING=19,
+    TAG_ABI_FP_DENORMAL=20,
+    TAG_ABI_FP_EXCEPTIONS=21,
+    TAG_ABI_FP_USER_EXCEPTIONS=22,
+    TAG_ABI_FP_NUMBER_MODEL=23,
+    TAG_ABI_ALIGN_NEEDED=24,
+    TAG_ABI_ALIGN_PRESERVED=25,
+    TAG_ABI_ENUM_SIZE=26,
+    TAG_ABI_HARDFP_USE=27,
+    TAG_ABI_VFP_ARGS=28,
+    TAG_ABI_WMMX_ARGS=29,
+    TAG_ABI_OPTIMIZATION_GOALS=30,
+    TAG_ABI_FP_OPTIMIZATION_GOALS=31,
+    TAG_COMPATIBILITY=32,
+    TAG_CPU_UNALIGNED_ACCESS=34,
+    TAG_FP_HP_EXTENSION=36,
+    TAG_ABI_FP_16BIT_FORMAT=38,
+    TAG_MPEXTENSION_USE=42,
+    TAG_DIV_USE=44,
+    TAG_NODEFAULTS=64,
+    TAG_ALSO_COMPATIBLE_WITH=65,
+    TAG_T2EE_USE=66,
+    TAG_CONFORMANCE=67,
+    TAG_VIRTUALIZATION_USE=68,
+    TAG_MPEXTENSION_USE_OLD=70,
 )
